@@ -1,0 +1,47 @@
+import { useEffect, useState } from 'react'
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { ApiError } from '../services/api'
+import { createSupplement, deleteSupplement, getSupplementDashboard, logSupplement, updateSupplement } from '../services/supplements'
+
+const today = new Date().toISOString().slice(0, 10)
+const blankForm = { name: '', dosage: '', unit: '', frequency: '', notes: '' }
+const inputClass = 'mt-2 w-full rounded-xl border border-[#dfe6d9] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#719b35]'
+
+export function SupplementsPage() {
+  const [selectedDate, setSelectedDate] = useState(today)
+  const [dashboard, setDashboard] = useState(null)
+  const [form, setForm] = useState(blankForm)
+  const [editingId, setEditingId] = useState(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  async function loadDashboard(date = selectedDate) {
+    setError('')
+    try { setDashboard(await getSupplementDashboard(date)) } catch (requestError) { setError(requestError instanceof ApiError ? requestError.message : 'Unable to load supplement tracking.') } finally { setIsLoading(false) }
+  }
+
+  useEffect(() => { getSupplementDashboard(today).then(setDashboard).catch((requestError) => setError(requestError instanceof ApiError ? requestError.message : 'Unable to load supplement tracking.')).finally(() => setIsLoading(false)) }, [])
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    setError('')
+    setSuccess('')
+    setIsSaving(true)
+    try { if (editingId) await updateSupplement(editingId, form); else await createSupplement(form); setForm(blankForm); setEditingId(null); setSuccess(editingId ? 'Supplement updated.' : 'Supplement added.'); await loadDashboard() } catch (requestError) { setError(requestError instanceof ApiError ? requestError.message : 'Unable to save this supplement.') } finally { setIsSaving(false) }
+  }
+
+  async function handleDelete(id) { setError(''); setSuccess(''); try { await deleteSupplement(id); setSuccess('Supplement deleted.'); await loadDashboard() } catch (requestError) { setError(requestError instanceof ApiError ? requestError.message : 'Unable to delete this supplement.') } }
+  async function handleToggle(item) { setError(''); setSuccess(''); try { setDashboard(await logSupplement(item.id, selectedDate, !item.taken)) } catch (requestError) { setError(requestError instanceof ApiError ? requestError.message : 'Unable to update adherence.') } }
+  function beginEdit(item) { setEditingId(item.id); setForm({ name: item.name, dosage: item.dosage, unit: item.unit, frequency: item.frequency, notes: item.notes }); setSuccess('') }
+
+  if (isLoading) return <div className="grid min-h-80 place-items-center text-sm text-[#718078]">Loading supplements...</div>
+  return <section className="animate-[fade-in_400ms_ease-out]"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="mb-4 text-xs font-bold uppercase tracking-[0.24em] text-[#719b35]">Supplements</p><h1 className="font-display text-4xl font-bold tracking-tight text-[#18221d] sm:text-6xl">Keep your routine in view.</h1><p className="mt-5 max-w-xl text-base leading-7 text-[#718078]">Track what you take and build a clear record of your consistency.</p></div><label className="text-sm font-semibold">Log date<input className="mt-2 rounded-xl border border-[#dfe6d9] bg-white px-4 py-3 font-normal outline-none focus:border-[#719b35]" type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setIsLoading(true); loadDashboard(event.target.value) }} /></label></div>{error && <Message tone="error">{error}</Message>}{success && <Message tone="success">{success}</Message>}<div className="mt-8 grid gap-4 sm:grid-cols-3"><SummaryCard label="Completed today" value={`${dashboard.completed_count} / ${dashboard.total_count}`} /><SummaryCard label="Adherence" value={`${dashboard.adherence_percent}%`} /><SummaryCard label="Tracking date" value={formatDate(selectedDate)} /></div><div className="mt-5 grid gap-5 xl:grid-cols-[1.1fr_0.9fr]"><section className="rounded-2xl border border-[#dfe6d9] bg-white p-5 sm:p-7"><div className="flex items-center justify-between"><div><h2 className="font-display text-xl font-bold">Today's supplements</h2><p className="mt-1 text-sm text-[#718078]">Mark each item when you take it.</p></div><span className="rounded-full bg-[#e7f4c7] px-3 py-1 text-xs font-semibold text-[#527b20]">Tracking only</span></div><div className="mt-6 space-y-3">{dashboard.supplements.length ? dashboard.supplements.map((item) => <SupplementRow key={item.id} item={item} onToggle={() => handleToggle(item)} onEdit={() => beginEdit(item)} onDelete={() => handleDelete(item.id)} />) : <p className="rounded-xl border border-dashed border-[#bac8b5] p-6 text-center text-sm text-[#718078]">Add a supplement to begin tracking.</p>}</div></section><section className="rounded-2xl border border-[#dfe6d9] bg-white p-5 sm:p-7"><h2 className="font-display text-xl font-bold">Supplement history</h2><p className="mt-1 text-sm text-[#718078]">Completed items over the last seven days.</p><div className="mt-6 h-56"><ResponsiveContainer width="100%" height="100%"><BarChart data={dashboard.history}><CartesianGrid stroke="#edf0e8" strokeDasharray="3 3" vertical={false} /><XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(value) => new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short' })} /><YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={25} /><Tooltip /><Bar dataKey="completed" name="Completed" fill="#719b35" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></div></section></div><section className="mt-5 rounded-2xl border border-[#dfe6d9] bg-white p-5 sm:p-7"><div className="flex items-center justify-between gap-4"><div><h2 className="font-display text-xl font-bold">Your supplement list</h2><p className="mt-1 text-sm text-[#718078]">Store the details you want to track.</p></div>{editingId && <button className="text-sm font-semibold text-[#527b20] hover:underline" type="button" onClick={() => { setEditingId(null); setForm(blankForm) }}>Cancel edit</button>}</div><form className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" onSubmit={handleSubmit}><Field label="Name"><input className={inputClass} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></Field><Field label="Dosage"><input className={inputClass} value={form.dosage} onChange={(event) => setForm({ ...form, dosage: event.target.value })} placeholder="e.g. 5" required /></Field><Field label="Unit"><input className={inputClass} value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} placeholder="e.g. g or capsule" required /></Field><Field label="Frequency"><input className={inputClass} value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value })} placeholder="e.g. Daily" required /></Field><Field label="Notes"><input className={inputClass} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Optional tracking note" /></Field><button className="rounded-xl bg-[#18221d] px-5 py-3 font-semibold text-[#e7f4c7] hover:bg-[#304232] disabled:opacity-60 lg:col-span-3" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : editingId ? 'Update supplement' : 'Add supplement'}</button></form></section></section>
+}
+
+function SupplementRow({ item, onToggle, onEdit, onDelete }) { return <div className={`flex flex-col gap-4 rounded-xl border p-4 transition sm:flex-row sm:items-center ${item.taken ? 'border-[#b8d580] bg-[#eff7dd]' : 'border-[#edf0e8] bg-[#f8faf5]'}`}><button className={`grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 text-sm font-bold ${item.taken ? 'border-[#719b35] bg-[#719b35] text-white' : 'border-[#bac8b5] text-transparent'}`} type="button" aria-label={`${item.taken ? 'Unmark' : 'Mark'} ${item.name}`} onClick={onToggle}>✓</button><div className="min-w-0 flex-1"><p className="font-semibold">{item.name}</p><p className="mt-1 text-sm text-[#718078]">{item.dosage} {item.unit} / {item.frequency}</p>{item.notes && <p className="mt-1 text-xs text-[#9cad9a]">{item.notes}</p>}</div><div className="flex gap-3 text-xs font-semibold"><button className="text-[#527b20] hover:underline" type="button" onClick={onEdit}>Edit</button><button className="text-[#a43b25] hover:underline" type="button" onClick={onDelete}>Delete</button></div></div> }
+function SummaryCard({ label, value }) { return <div className="rounded-2xl border border-[#dfe6d9] bg-white p-5"><p className="text-sm text-[#718078]">{label}</p><p className="mt-5 font-display text-2xl font-bold">{value}</p></div> }
+function Field({ label, children }) { return <label className="block text-sm font-semibold">{label}{children}</label> }
+function Message({ tone, children }) { return <p role="alert" className={`mt-6 rounded-xl px-4 py-3 text-sm ${tone === 'error' ? 'bg-[#ffe4dc] text-[#a43b25]' : 'bg-[#e7f4c7] text-[#466522]'}`}>{children}</p> }
+function formatDate(value) { return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }
